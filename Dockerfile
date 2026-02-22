@@ -18,10 +18,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Directorio de trabajo
 WORKDIR /app
 
-# Dependencias del sistema (mínimas para compilar paquetes con C extensions)
+# Dependencias del sistema
+# libmagic1  → requerida por python-magic / unstructured al importar
+# libgomp1   → requerida por onnxruntime (dependencia de chromadb)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libmagic1 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar dependencias Python primero (aprovechar caché de capas Docker)
@@ -31,6 +35,11 @@ RUN pip install --upgrade pip && \
 
 # Copiar código de la aplicación
 COPY app/ ./app/
+
+# Verificar que todos los imports arrancan correctamente en BUILD TIME.
+# Si falla aquí, el error es visible en los Build Logs (mucho más fácil de debuggear
+# que un crash silencioso en runtime durante el healthcheck).
+RUN python -c "from app.main import app; print('✓ Import test passed')"
 
 # Crear directorios necesarios
 RUN mkdir -p /app/chroma_db /app/data
