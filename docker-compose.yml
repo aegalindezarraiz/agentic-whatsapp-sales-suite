@@ -1,0 +1,138 @@
+version: "3.9"
+
+# ============================================================
+# Agentic Sales Suite - Docker Compose
+#
+# Servicios:
+#   api      → FastAPI (webhook + admin endpoints)
+#   worker   → RQ Worker (procesa mensajes con CrewAI)
+#   redis    → Cola de mensajes + cache de conversaciones
+#   dashboard → RQ Dashboard (monitoreo de la cola)
+#
+# Uso:
+#   cp .env.example .env   # Configurar variables
+#   docker compose up -d   # Levantar todo
+#   docker compose logs -f api worker  # Ver logs
+# ============================================================
+
+services:
+
+  # ──────────────────────────────────────────────
+  # API: FastAPI (recibe webhooks de WhatsApp)
+  # ──────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales_suite_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - VECTOR_DB_PATH=/app/chroma_db
+    volumes:
+      - chroma_data:/app/chroma_db
+      - catalog_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - sales_network
+
+  # ──────────────────────────────────────────────
+  # Worker: RQ Worker (ejecuta CrewAI agents)
+  # Escalar: deploy.replicas para más workers
+  # ──────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales_suite_worker
+    restart: unless-stopped
+    command: ["rq", "worker", "whatsapp_messages", "--url", "redis://redis:6379/0", "--with-scheduler"]
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - VECTOR_DB_PATH=/app/chroma_db
+    volumes:
+      - chroma_data:/app/chroma_db
+      - catalog_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      replicas: 2  # 2 workers por defecto (escalar según volumen)
+    networks:
+      - sales_network
+
+  # ──────────────────────────────────────────────
+  # Redis: Cola de mensajes + Cache de contexto
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: sales_suite_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sales_network
+
+  # ──────────────────────────────────────────────
+  # RQ Dashboard: Monitoreo visual de la cola
+  # Acceder en: http://localhost:9181
+  # ──────────────────────────────────────────────
+  dashboard:
+    image: eoranged/rq-dashboard:latest
+    container_name: sales_suite_dashboard
+    restart: unless-stopped
+    ports:
+      - "9181:9181"
+    environment:
+      - RQ_DASHBOARD_REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    networks:
+      - sales_network
+
+# ──────────────────────────────────────────────
+# Volúmenes persistentes
+# ──────────────────────────────────────────────
+volumes:
+  redis_data:
+    driver: local
+  chroma_data:
+    driver: local
+  catalog_data:
+    driver: local
+
+# ──────────────────────────────────────────────
+# Red interna
+# ──────────────────────────────────────────────
+networks:
+  sales_network:
+    driver: bridge

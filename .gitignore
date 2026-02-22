@@ -1,0 +1,34 @@
+# Entorno
+.env
+*.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Base de datos vectorial (regenerar con script de ingesta)
+chroma_db/
+/tmp/
+
+# Datos sensibles
+data/*.json
+!data/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Docker
+docker-compose.override.yml
