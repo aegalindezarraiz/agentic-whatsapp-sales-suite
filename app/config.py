@@ -11,8 +11,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM
-    openai_api_key: str = Field(..., description="OpenAI API Key")
+    # LLM — vacío se detecta en runtime (el /health arranca igual sin ella)
+    openai_api_key: str = Field("", description="OpenAI API Key")
     openai_model: str = Field("gpt-4o", description="Modelo LLM principal")
     openai_embedding_model: str = Field("text-embedding-3-small", description="Modelo de embeddings")
 

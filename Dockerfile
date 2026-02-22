@@ -42,12 +42,11 @@ RUN addgroup --system appgroup && \
 
 USER appuser
 
-# Puerto expuesto
+# Puerto expuesto (Railway inyecta $PORT en runtime; 8000 es solo documentación)
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+# Health check deshabilitado aquí — Railway gestiona el suyo propio via $PORT
+# (Docker HEALTHCHECK con puerto hardcodeado conflictuaba con $PORT de Railway)
 
-# Comando por defecto: servidor FastAPI con Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Comando por defecto: Railway lo sobreescribe con startCommand de railway.toml
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
