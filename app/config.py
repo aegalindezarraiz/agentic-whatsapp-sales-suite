@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     crm_api_url: Optional[str] = None
     crm_api_key: Optional[str] = None
 
+    # CORS — por defecto permite todo; en prod setear a la URL del frontend
+    # Ej: CORS_ORIGINS=https://frontend.up.railway.app
+    cors_origins: str = Field("*", description="Orígenes CORS separados por coma, o * para todos")
+
     # App
     app_env: str = Field("development")
     log_level: str = Field("INFO")

@@ -42,11 +42,10 @@ RUN addgroup --system appgroup && \
 
 USER appuser
 
-# Puerto expuesto (Railway inyecta $PORT en runtime; 8000 es solo documentación)
+# Puerto expuesto (Railway inyecta $PORT en runtime; 8000 es fallback local)
 EXPOSE 8000
 
-# Health check deshabilitado aquí — Railway gestiona el suyo propio via $PORT
-# (Docker HEALTHCHECK con puerto hardcodeado conflictuaba con $PORT de Railway)
-
-# Comando por defecto: Railway lo sobreescribe con startCommand de railway.toml
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form para que ${PORT:-8000} se expanda correctamente.
+# Un solo worker: con librerías ML pesadas (crewai, chromadb, langchain)
+# 2 workers duplican RAM y causan OOM en Railway free tier.
+CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
