@@ -1,0 +1,39 @@
+# ============================================================
+# Dockerfile Worker — RQ Worker (procesa mensajes con CrewAI)
+# ============================================================
+# Servicio separado en Railway para el procesamiento asíncrono.
+# Usa la misma imagen base que el API, pero con diferente CMD.
+
+FROM python:3.11-slim
+
+LABEL description="Agentic Sales Suite - RQ Worker"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+COPY app/ ./app/
+
+RUN mkdir -p /app/chroma_db /app/data
+
+RUN addgroup --system appgroup && \
+    adduser --system --ingroup appgroup appuser && \
+    chown -R appuser:appgroup /app
+
+USER appuser
+
+# El worker procesa la cola "whatsapp_messages"
+# REDIS_URL se inyecta automáticamente por Railway
+CMD rq worker whatsapp_messages --url $REDIS_URL --with-scheduler

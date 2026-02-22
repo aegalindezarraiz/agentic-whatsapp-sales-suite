@@ -1,0 +1,29 @@
+# ============================================================
+# Railway Configuration — API Service (FastAPI webhook)
+# ============================================================
+# Este archivo configura el servicio principal de la API.
+# El servicio Worker usa Dockerfile.worker (configurar por separado en Railway).
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Variables de entorno requeridas (configurar en Railway Dashboard):
+# OPENAI_API_KEY            → tu API key de OpenAI
+# WHATSAPP_PROVIDER         → twilio o evolution
+# TWILIO_ACCOUNT_SID        → (si usas Twilio)
+# TWILIO_AUTH_TOKEN         → (si usas Twilio)
+# TWILIO_PHONE_NUMBER       → whatsapp:+14155238886
+# EVOLUTION_API_URL         → (si usas Evolution API)
+# EVOLUTION_API_KEY         → (si usas Evolution API)
+# EVOLUTION_INSTANCE        → (si usas Evolution API)
+# WEBHOOK_VERIFY_TOKEN      → token secreto para verificar webhook
+# REDIS_URL                 → se inyecta automáticamente desde el servicio Redis de Railway
+# VECTOR_DB_PATH            → /app/chroma_db  (usar Railway Volume)
