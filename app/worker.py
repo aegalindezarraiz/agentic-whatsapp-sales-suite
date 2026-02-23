@@ -1,19 +1,19 @@
 """
-Worker RQ: procesa mensajes de WhatsApp de forma asíncrona.
+Worker RQ: procesa mensajes de WhatsApp y Telegram de forma asíncrona.
 
 Este módulo es ejecutado por los workers de RQ, no por FastAPI directamente.
 Los agentes CrewAI corren aquí para no bloquear el servidor HTTP.
 
 Ejecutar workers:
-    rq worker whatsapp_messages --url redis://localhost:6379
+  rq worker whatsapp_messages --url redis://localhost:6379
 
-Flujo:
+Flujo (WhatsApp y Telegram comparten el mismo pipeline CrewAI):
   1. Recibir message_data de la cola
   2. Recuperar historial de conversación
   3. Clasificar intención (Manager)
   4. Generar respuesta (Sales o Support)
   5. Validar respuesta (QA - Reflexion)
-  6. Enviar respuesta por WhatsApp
+  6. Enviar respuesta por el canal correspondiente
   7. Guardar turno en historial
 """
 
@@ -79,39 +79,25 @@ def _extract_final_response(qa_output: str) -> str:
     return qa_output.strip()
 
 
-def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
+def _run_crewai_pipeline(
+    user_message: str,
+    history: list,
+    profile_name: str,
+) -> tuple[str, str]:
     """
-    Función principal ejecutada por el worker RQ.
-
-    Args:
-        message_data: {from, body, message_id, timestamp, profile_name}
+    Ejecuta el pipeline CrewAI compartido por WhatsApp y Telegram.
 
     Returns:
-        Dict con la respuesta enviada y metadatos del procesamiento.
+        (intent_type, final_response) — tipo de intención detectado y respuesta final.
     """
-    phone = message_data.get("from", "")
-    user_message = message_data.get("body", "").strip()
-    profile_name = message_data.get("profile_name", "Cliente")
-
-    if not user_message:
-        logger.warning(f"Mensaje vacío de {phone}, ignorando")
-        return {"status": "ignored", "reason": "empty_message"}
-
-    logger.info(f"[Worker] Procesando mensaje de {phone}: '{user_message[:80]}...'")
-
-    # 1. Recuperar historial de conversación
-    history = get_conversation_history(phone)
-
-    # 2. Routing: intento rápido primero, luego LLM si no es claro
     quick_route = _quick_route(user_message)
 
-    # 3. Instanciar agentes con sus herramientas
+    # Instanciar agentes
     manager = create_manager_agent(tools=get_manager_tools())
     sales = create_sales_agent(tools=get_sales_tools())
     support = create_support_agent(tools=get_support_tools())
     qa = create_qa_agent()
 
-    # 4. Determinar tipo de respuesta y construir crew
     if quick_route == "VENTAS":
         intent_type = "VENTAS"
         response_task = create_sales_response_task(
@@ -125,7 +111,7 @@ def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
                 response_task,
                 create_qa_validation_task(
                     agent=qa,
-                    draft_response="{response_task_output}",  # CrewAI resuelve esto
+                    draft_response="{response_task_output}",
                     original_message=user_message,
                 ),
             ],
@@ -155,15 +141,12 @@ def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     else:
-        # Routing completo con Manager + clasificación via LLM
         intent_type = "CLASIFICACION_LLM"
         classify_task = create_classify_intent_task(
             agent=manager,
             user_message=user_message,
             conversation_history=history,
         )
-
-        # Para consultas generales o saludos, el manager responde directamente
         general_task = create_general_response_task(
             agent=manager,
             user_message=user_message,
@@ -173,7 +156,6 @@ def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
             draft_response="{general_task_output}",
             original_message=user_message,
         )
-
         crew = Crew(
             agents=[manager, qa],
             tasks=[classify_task, general_task, qa_task],
@@ -181,7 +163,6 @@ def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
             verbose=True,
         )
 
-    # 5. Ejecutar crew
     try:
         crew_result = crew.kickoff(inputs={
             "user_message": user_message,
@@ -196,26 +177,113 @@ def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
             "¿Podrías repetir tu consulta? Estoy aquí para ayudarte."
         )
 
-    # 6. Extraer respuesta final validada por QA
     final_response = _extract_final_response(raw_response)
+    return intent_type, final_response
 
-    # 7. Enviar respuesta por WhatsApp
+
+def process_whatsapp_message(message_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Función principal ejecutada por el worker RQ para mensajes de WhatsApp.
+
+    Args:
+        message_data: {from, body, message_id, timestamp, profile_name}
+
+    Returns:
+        Dict con la respuesta enviada y metadatos del procesamiento.
+    """
+    phone = message_data.get("from", "")
+    user_message = message_data.get("body", "").strip()
+    profile_name = message_data.get("profile_name", "Cliente")
+
+    if not user_message:
+        logger.warning(f"Mensaje vacío de {phone}, ignorando")
+        return {"status": "ignored", "reason": "empty_message"}
+
+    logger.info(f"[Worker/WA] Procesando mensaje de {phone}: '{user_message[:80]}...'")
+
+    # 1. Recuperar historial de conversación (clave: número de teléfono)
+    history = get_conversation_history(phone)
+
+    # 2. Ejecutar pipeline CrewAI
+    intent_type, final_response = _run_crewai_pipeline(user_message, history, profile_name)
+
+    # 3. Enviar respuesta por WhatsApp
     try:
         from app.whatsapp import get_whatsapp_provider
         provider = get_whatsapp_provider()
         send_result = asyncio.run(provider.send_message(to=phone, body=final_response))
-        logger.info(f"[Worker] Respuesta enviada a {phone}")
+        logger.info(f"[Worker/WA] Respuesta enviada a {phone}")
     except Exception as e:
         logger.error(f"Error enviando WhatsApp a {phone}: {e}", exc_info=True)
         send_result = {"status": "error", "error": str(e)}
 
-    # 8. Guardar turno en historial
+    # 4. Guardar turno en historial
     save_conversation_turn(phone, "cliente", user_message)
     save_conversation_turn(phone, "agente", final_response)
 
     return {
         "status": "processed",
+        "channel": "whatsapp",
         "phone": phone,
+        "intent_type": intent_type,
+        "response_sent": final_response[:200] + "..." if len(final_response) > 200 else final_response,
+        "send_result": send_result,
+    }
+
+
+def process_telegram_message(message_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Función principal ejecutada por el worker RQ para mensajes de Telegram.
+
+    Args:
+        message_data: {chat_id, text, message_id, username, first_name, last_name, timestamp}
+
+    Returns:
+        Dict con la respuesta enviada y metadatos del procesamiento.
+    """
+    chat_id = message_data.get("chat_id", "")
+    user_message = message_data.get("text", "").strip()
+    first_name = message_data.get("first_name", "")
+    last_name = message_data.get("last_name", "")
+    username = message_data.get("username", "")
+    profile_name = (
+        f"{first_name} {last_name}".strip()
+        or username
+        or f"Telegram_{chat_id}"
+    )
+
+    if not user_message:
+        logger.warning(f"[Worker/TG] Mensaje vacío de chat_id={chat_id}, ignorando")
+        return {"status": "ignored", "reason": "empty_message"}
+
+    logger.info(f"[Worker/TG] Procesando mensaje de {chat_id} ({profile_name}): '{user_message[:80]}...'")
+
+    # 1. Recuperar historial de conversación (clave: chat_id de Telegram)
+    conv_key = str(chat_id)
+    history = get_conversation_history(conv_key)
+
+    # 2. Ejecutar pipeline CrewAI (mismo que WhatsApp)
+    intent_type, final_response = _run_crewai_pipeline(user_message, history, profile_name)
+
+    # 3. Enviar respuesta por Telegram
+    try:
+        from app.telegram import get_telegram_provider
+        provider = get_telegram_provider()
+        send_result = asyncio.run(provider.send_message(chat_id=chat_id, text=final_response))
+        logger.info(f"[Worker/TG] Respuesta enviada a chat_id={chat_id}")
+    except Exception as e:
+        logger.error(f"Error enviando Telegram a chat_id={chat_id}: {e}", exc_info=True)
+        send_result = {"status": "error", "error": str(e)}
+
+    # 4. Guardar turno en historial
+    save_conversation_turn(conv_key, "cliente", user_message)
+    save_conversation_turn(conv_key, "agente", final_response)
+
+    return {
+        "status": "processed",
+        "channel": "telegram",
+        "chat_id": chat_id,
+        "profile_name": profile_name,
         "intent_type": intent_type,
         "response_sent": final_response[:200] + "..." if len(final_response) > 200 else final_response,
         "send_result": send_result,
