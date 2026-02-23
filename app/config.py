@@ -1,4 +1,5 @@
 from typing import Literal, Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -31,6 +32,11 @@ class Settings(BaseSettings):
 
     # Webhook
     webhook_verify_token: str = Field("changeme", description="Token de verificación del webhook")
+
+    # Telegram Bot
+    telegram_bot_token: Optional[str] = None
+    telegram_bot_username: Optional[str] = None  # sin @, ej: Agentic_Sentinel_2026_bot
+    telegram_admin_chat_id: Optional[str] = None  # chat_id del admin para notificaciones
 
     # Vector DB
     vector_db_path: str = Field("./chroma_db")
