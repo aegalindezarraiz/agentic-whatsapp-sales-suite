@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 import redis
-from rq import Queue
+from rq import Queue, Retry
 from rq.job import Job
 
 from app.config import settings
@@ -66,7 +66,7 @@ def enqueue_message(message_data: dict[str, Any]) -> str:
         job_timeout=120,
         result_ttl=3600,  # mantener resultado 1h para debugging
         failure_ttl=86400,  # mantener errores 24h
-        retry=3,  # reintentar 3 veces en caso de fallo
+        retry=Retry(max=3),  # reintentar 3 veces en caso de fallo
     )
 
     logger.info(f"[Queue] Mensaje encolado — Job ID: {job.id}, From: {message_data.get('from')}")
