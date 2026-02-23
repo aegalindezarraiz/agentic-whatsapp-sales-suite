@@ -1,11 +1,10 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { fetchHealth, fetchStats, type HealthResponse, type StatsResponse } from '@/lib/api'
 
-// ------------------------------------------------------------------ //
-// Sub-components
-// ------------------------------------------------------------------ //
+// ── Sub-components ───────────────────────────────────────────────────
 
 function Badge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -23,17 +22,9 @@ function Badge({ ok, label }: { ok: boolean; label: string }) {
 }
 
 function StatCard({
-  label,
-  value,
-  sub,
-  accent = false,
-  warn = false,
+  label, value, sub, accent = false, warn = false,
 }: {
-  label: string
-  value: string | number
-  sub?: string
-  accent?: boolean
-  warn?: boolean
+  label: string; value: string | number; sub?: string; accent?: boolean; warn?: boolean
 }) {
   return (
     <div
@@ -62,9 +53,29 @@ function Section({ title }: { title: string }) {
   )
 }
 
-// ------------------------------------------------------------------ //
-// Page
-// ------------------------------------------------------------------ //
+function QuickLink({
+  href, title, description, color = 'gray',
+}: {
+  href: string; title: string; description: string; color?: 'green' | 'blue' | 'purple' | 'gray'
+}) {
+  const colorMap = {
+    green:  'border-green-500/20 bg-green-500/5 hover:bg-green-500/10 hover:border-green-500/30',
+    blue:   'border-blue-500/20 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/30',
+    purple: 'border-purple-500/20 bg-purple-500/5 hover:bg-purple-500/10 hover:border-purple-500/30',
+    gray:   'border-gray-800 bg-gray-900/60 hover:border-gray-600 hover:bg-gray-800/60',
+  }
+  return (
+    <Link
+      href={href}
+      className={`flex flex-col gap-1 p-5 rounded-xl border transition-colors ${colorMap[color]}`}
+    >
+      <span className="text-base font-medium text-white">{title}</span>
+      <span className="text-xs text-gray-500">{description}</span>
+    </Link>
+  )
+}
+
+// ── Page ─────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -76,10 +87,7 @@ export default function DashboardPage() {
   const load = useCallback(async () => {
     try {
       const [h, s] = await Promise.all([fetchHealth(), fetchStats()])
-      setHealth(h)
-      setStats(s)
-      setError(null)
-      setLastRefresh(new Date())
+      setHealth(h); setStats(s); setError(null); setLastRefresh(new Date())
     } catch {
       setError('No se pudo conectar al backend. Verifica NEXT_PUBLIC_API_URL.')
     } finally {
@@ -118,7 +126,6 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      {/* Error banner */}
       {error && (
         <div className="mt-4 p-3 rounded-lg border border-red-500/30 bg-red-500/5 text-red-400 text-sm">
           {error}
@@ -129,7 +136,7 @@ export default function DashboardPage() {
         <div className="mt-12 text-center text-gray-600 text-sm">Conectando al backend…</div>
       ) : (
         <>
-          {/* System status badges */}
+          {/* Status badges */}
           <div className="flex flex-wrap gap-2 mt-5 mb-2">
             <Badge ok={apiOk} label={apiOk ? 'API online' : 'API offline'} />
             <Badge ok={redisOk} label={redisOk ? 'Redis conectado' : 'Redis error'} />
@@ -139,29 +146,13 @@ export default function DashboardPage() {
           {/* System */}
           <Section title="Sistema" />
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard
-              label="API Status"
-              value={apiOk ? 'Online' : 'Offline'}
-              sub={`versión ${health?.version ?? '—'}`}
-              accent={apiOk}
-              warn={!apiOk}
-            />
-            <StatCard
-              label="Entorno"
-              value={health?.env ?? '—'}
-              sub={stats?.config.whatsapp_provider ?? ''}
-            />
-            <StatCard
-              label="Modelo LLM"
-              value={stats?.config.llm_model ?? '—'}
-            />
-            <StatCard
-              label="Redis"
-              value={redisOk ? 'Online' : 'Error'}
-              sub={stats?.queue.error ?? 'conectado'}
-              accent={redisOk}
-              warn={!redisOk}
-            />
+            <StatCard label="API Status" value={apiOk ? 'Online' : 'Offline'}
+              sub={`versión ${health?.version ?? '—'}`} accent={apiOk} warn={!apiOk} />
+            <StatCard label="Entorno" value={health?.env ?? '—'}
+              sub={stats?.config.whatsapp_provider ?? ''} />
+            <StatCard label="Modelo LLM" value={stats?.config.llm_model ?? '—'} />
+            <StatCard label="Redis" value={redisOk ? 'Online' : 'Error'}
+              sub={stats?.queue.error ?? 'conectado'} accent={redisOk} warn={!redisOk} />
           </div>
 
           {/* Queue */}
@@ -170,51 +161,34 @@ export default function DashboardPage() {
             <StatCard label="En cola" value={stats?.queue.queued ?? 0} />
             <StatCard label="Procesando" value={stats?.queue.started ?? 0} accent />
             <StatCard label="Completados" value={stats?.queue.finished ?? 0} accent />
-            <StatCard
-              label="Fallidos"
-              value={stats?.queue.failed ?? 0}
-              warn={(stats?.queue.failed ?? 0) > 0}
-            />
+            <StatCard label="Fallidos" value={stats?.queue.failed ?? 0}
+              warn={(stats?.queue.failed ?? 0) > 0} />
             <StatCard label="Diferidos" value={stats?.queue.deferred ?? 0} />
           </div>
 
           {/* RAG */}
           <Section title="Base de conocimiento (RAG)" />
           <div className="grid grid-cols-2 gap-3">
-            <StatCard
-              label="Catálogo de productos"
-              value={stats?.rag.catalog ?? 0}
-              sub="chunks indexados"
-              accent={(stats?.rag.catalog ?? 0) > 0}
-            />
-            <StatCard
-              label="Documentos de soporte"
-              value={stats?.rag.support_docs ?? 0}
-              sub="chunks indexados"
-              accent={(stats?.rag.support_docs ?? 0) > 0}
-            />
+            <StatCard label="Catálogo de productos" value={stats?.rag.catalog ?? 0}
+              sub="chunks indexados" accent={(stats?.rag.catalog ?? 0) > 0} />
+            <StatCard label="Documentos de soporte" value={stats?.rag.support_docs ?? 0}
+              sub="chunks indexados" accent={(stats?.rag.support_docs ?? 0) > 0} />
           </div>
 
-          {/* Quick links */}
+          {/* Quick actions */}
           <Section title="Acciones rápidas" />
-          <div className="grid grid-cols-2 gap-3">
-            <a
-              href="/catalog"
-              className="flex flex-col gap-1 p-5 rounded-xl border border-gray-800 bg-gray-900/60 hover:border-gray-600 hover:bg-gray-800/60 transition-colors"
-            >
-              <span className="text-base font-medium text-white">Ingresar productos</span>
-              <span className="text-xs text-gray-500">Agrega o actualiza el catálogo en el RAG</span>
-            </a>
-            <a
-              href="/docs"
-              className="flex flex-col gap-1 p-5 rounded-xl border border-gray-800 bg-gray-900/60 hover:border-gray-600 hover:bg-gray-800/60 transition-colors"
-            >
-              <span className="text-base font-medium text-white">Indexar documentos</span>
-              <span className="text-xs text-gray-500">Sube PDFs y manuales al RAG de soporte</span>
-            </a>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <QuickLink href="/conversations" title="Conversaciones"
+              description="Ver historial de chats con clientes" color="blue" />
+            <QuickLink href="/leads" title="Leads"
+              description="Tabla de leads + exportar CSV" color="purple" />
+            <QuickLink href="/knowledge" title="Base de conocimiento"
+              description="Catálogo de productos y documentos" color="green" />
+            <QuickLink href="/settings" title="Configuración"
+              description="Webhook URL, variables de entorno" />
           </div>
         </>
       )}
     </div>
   )
-}
+            }
