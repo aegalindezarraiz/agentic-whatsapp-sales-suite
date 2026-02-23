@@ -7,10 +7,10 @@ Diseño:
   - Manejo de reintentos automáticos en caso de fallo
 
 Activar workers:
-    rq worker whatsapp_messages --url redis://localhost:6379
+  rq worker whatsapp_messages --url redis://localhost:6379
 
 Escalar:
-    rq worker whatsapp_messages --url redis://localhost:6379 &  (x N workers)
+  rq worker whatsapp_messages --url redis://localhost:6379 & (x N workers)
 """
 
 import logging
@@ -24,9 +24,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 # ------------------------------------------------------------------ #
-# Conexión Redis                                                      #
+# Conexión Redis                                                       #
 # ------------------------------------------------------------------ #
 
 def get_redis_connection() -> redis.Redis:
@@ -35,7 +34,7 @@ def get_redis_connection() -> redis.Redis:
 
 
 def get_queue() -> Queue:
-    """Retorna la cola RQ para mensajes de WhatsApp."""
+    """Retorna la cola RQ compartida por WhatsApp y Telegram."""
     conn = get_redis_connection()
     return Queue(
         name=settings.redis_queue_name,
@@ -45,7 +44,7 @@ def get_queue() -> Queue:
 
 
 # ------------------------------------------------------------------ #
-# Encolar mensaje                                                     #
+# Encolar mensajes                                                     #
 # ------------------------------------------------------------------ #
 
 def enqueue_message(message_data: dict[str, Any]) -> str:
@@ -59,17 +58,42 @@ def enqueue_message(message_data: dict[str, Any]) -> str:
         Job ID para tracking.
     """
     queue = get_queue()
-
     job = queue.enqueue(
         "app.worker.process_whatsapp_message",  # función del worker
         message_data,
         job_timeout=120,
-        result_ttl=3600,  # mantener resultado 1h para debugging
-        failure_ttl=86400,  # mantener errores 24h
-        retry=Retry(max=3),  # reintentar 3 veces en caso de fallo
+        result_ttl=3600,   # mantener resultado 1h para debugging
+        failure_ttl=86400, # mantener errores 24h
+        retry=Retry(max=3),
     )
+    logger.info(f"[Queue/WA] Mensaje encolado — Job ID: {job.id}, From: {message_data.get('from')}")
+    return job.id
 
-    logger.info(f"[Queue] Mensaje encolado — Job ID: {job.id}, From: {message_data.get('from')}")
+
+def enqueue_telegram_message(message_data: dict[str, Any]) -> str:
+    """
+    Encola un mensaje entrante de Telegram para procesamiento asíncrono.
+
+    Args:
+        message_data: Dict con chat_id, text, message_id, username,
+                      first_name, last_name, timestamp
+
+    Returns:
+        Job ID para tracking.
+    """
+    queue = get_queue()
+    job = queue.enqueue(
+        "app.worker.process_telegram_message",  # función del worker
+        message_data,
+        job_timeout=120,
+        result_ttl=3600,
+        failure_ttl=86400,
+        retry=Retry(max=3),
+    )
+    logger.info(
+        f"[Queue/TG] Mensaje encolado — Job ID: {job.id}, "
+        f"Chat ID: {message_data.get('chat_id')}"
+    )
     return job.id
 
 
@@ -82,7 +106,6 @@ def get_job_status(job_id: str) -> dict[str, Any]:
     """
     conn = get_redis_connection()
     job = Job.fetch(job_id, connection=conn)
-
     return {
         "job_id": job_id,
         "status": job.get_status().value,
@@ -97,9 +120,7 @@ def get_queue_stats() -> dict[str, int]:
     """Retorna métricas de la cola para monitoreo."""
     queue = get_queue()
     conn = get_redis_connection()
-
     failed_queue = Queue("failed", connection=conn)
-
     return {
         "queued": len(queue),
         "started": queue.started_job_registry.count,
@@ -110,7 +131,7 @@ def get_queue_stats() -> dict[str, int]:
 
 
 # ------------------------------------------------------------------ #
-# Cache de conversación en Redis                                     #
+# Cache de conversación en Redis                                       #
 # ------------------------------------------------------------------ #
 
 CONVERSATION_TTL = 3600 * 2  # 2 horas de contexto de conversación
@@ -121,7 +142,7 @@ def get_conversation_history(phone: str) -> str:
     Recupera el historial de conversación de un cliente desde Redis.
 
     Args:
-        phone: Número de WhatsApp del cliente.
+        phone: Número de WhatsApp del cliente o chat_id de Telegram.
 
     Returns:
         Historial como string, o vacío si no existe.
@@ -137,8 +158,8 @@ def save_conversation_turn(phone: str, role: str, message: str) -> None:
     Agrega un turno al historial de conversación.
 
     Args:
-        phone:   Número del cliente.
-        role:    'cliente' o 'agente'.
+        phone: Número del cliente o chat_id de Telegram.
+        role: 'cliente' o 'agente'.
         message: Texto del mensaje.
     """
     conn = get_redis_connection()
@@ -153,7 +174,6 @@ def save_conversation_turn(phone: str, role: str, message: str) -> None:
     turns = history.split("\n---\n") if history else []
     turns.append(new_turn)
     turns = turns[-10:]  # Ventana deslizante de 10 turnos
-
     conn.setex(key, CONVERSATION_TTL, "\n---\n".join(turns))
 
 
